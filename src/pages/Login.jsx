@@ -20,7 +20,7 @@ export default function Login() {
     e.preventDefault();
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      nav("/");
+      nav("/dashboard");
     } catch (err) {
       alert(err.message);
     }

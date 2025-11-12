@@ -8,6 +8,7 @@ import Navbar from "./components/Navbar";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./firebase";
 import ProtectedRoute from "./components/ProtectedRoute";
+import LandingPage from "./pages/LandingPage";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -34,26 +35,38 @@ function App() {
       <Navbar user={user} />
       <div className="container my-3">
         <Routes>
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute user={user}>
-                <Dashboard user={user} />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/editor/:id"
-            element={
-              <ProtectedRoute user={user}>
-                <Editor user={user} />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+  {/* Landing page with redirect for logged-in users */}
+  <Route
+    path="/"
+    element={user ? <Navigate to="/dashboard" replace /> : <LandingPage />}
+  />
+
+  {/* Protected routes */}
+  <Route
+    path="/dashboard"
+    element={
+      <ProtectedRoute user={user}>
+        <Dashboard user={user} />
+      </ProtectedRoute>
+    }
+  />
+  <Route
+    path="/editor/:id"
+    element={
+      <ProtectedRoute user={user}>
+        <Editor user={user} />
+      </ProtectedRoute>
+    }
+  />
+
+  {/* Auth routes */}
+  <Route path="/login" element={<Login />} />
+  <Route path="/signup" element={<Signup />} />
+
+  {/* Catch-all */}
+  <Route path="*" element={<Navigate to="/" replace />} />
+</Routes>
+
       </div>
     </>
   );

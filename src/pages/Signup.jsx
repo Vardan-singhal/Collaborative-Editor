@@ -19,7 +19,7 @@ export default function Signup() {
     e.preventDefault();
     try {
       await createUserWithEmailAndPassword(auth, email, password);
-      nav("/");
+      nav("/dashboard");
     } catch (err) {
       alert(err.message);
     }

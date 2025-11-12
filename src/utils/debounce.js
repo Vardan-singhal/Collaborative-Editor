@@ -1,4 +1,4 @@
-export function debounce(fn, wait = 200) {
+export function debounce(fn, wait = 600) {
   let t
   return (...args) => {
     return new Promise((resolve) => {

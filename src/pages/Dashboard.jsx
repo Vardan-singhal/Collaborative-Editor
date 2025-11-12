@@ -17,13 +17,12 @@ export default function Dashboard() {
   const [sharedDocs, setSharedDocs] = useState([]);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
-
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
 
   const navigate = useNavigate();
 
-  // ✅ 1) Persist user session and set authChecked AFTER Firebase reports state
+  // ✅ 1) Persist user session
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((currentUser) => {
       setUser(currentUser);
@@ -32,47 +31,33 @@ export default function Dashboard() {
     return unsubscribe;
   }, []);
 
-  // ✅ 2) Redirect only after authChecked (prevents premature redirect)
+  // ✅ 2) Redirect if unauthenticated
   useEffect(() => {
     if (!authChecked) return;
     if (!user) navigate("/login");
   }, [authChecked, user, navigate]);
 
-  // ✅ 3) Real-time listeners for owned + shared docs
+  // ✅ 3) Real-time document listeners
   useEffect(() => {
     if (!user) return;
 
     const docsRef = collection(db, "documents");
-
     const ownedQ = query(docsRef, where("ownerId", "==", user.uid));
-    const sharedQ = query(
-      docsRef,
-      where("collaborators", "array-contains", user.email)
-    );
+    const sharedQ = query(docsRef, where(`permissions.${user.email}`, "!=", null));
 
     const unsubOwned = onSnapshot(
       ownedQ,
       (snap) => {
-        const list = snap.docs.map((d) => {
-          const data = d.data() || {};
-          if (!Array.isArray(data.collaborators)) data.collaborators = [];
-          return { id: d.id, ...data };
-        });
-
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         list.sort((a, b) => {
           const ta =
             a.updatedAt?.toDate?.() ??
-            a.updatedAt ??
-            a.createdAt?.toDate?.() ??
-            0;
+            new Date(a.updatedAt ?? a.createdAt ?? 0);
           const tb =
             b.updatedAt?.toDate?.() ??
-            b.updatedAt ??
-            b.createdAt?.toDate?.() ??
-            0;
+            new Date(b.updatedAt ?? b.createdAt ?? 0);
           return tb - ta;
         });
-
         setOwnedDocs(list);
         setLoading(false);
       },
@@ -85,26 +70,18 @@ export default function Dashboard() {
     const unsubShared = onSnapshot(
       sharedQ,
       (snap) => {
-        const list = snap.docs.map((d) => {
-          const data = d.data() || {};
-          if (!Array.isArray(data.collaborators)) data.collaborators = [];
-          return { id: d.id, ...data };
-        });
-
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((d) => d.ownerId !== user.uid); // exclude owned
         list.sort((a, b) => {
           const ta =
             a.updatedAt?.toDate?.() ??
-            a.updatedAt ??
-            a.createdAt?.toDate?.() ??
-            0;
+            new Date(a.updatedAt ?? a.createdAt ?? 0);
           const tb =
             b.updatedAt?.toDate?.() ??
-            b.updatedAt ??
-            b.createdAt?.toDate?.() ??
-            0;
+            new Date(b.updatedAt ?? b.createdAt ?? 0);
           return tb - ta;
         });
-
         setSharedDocs(list);
         setLoading(false);
       },
@@ -115,16 +92,12 @@ export default function Dashboard() {
     );
 
     return () => {
-      try {
-        unsubOwned();
-      } catch (e) {}
-      try {
-        unsubShared();
-      } catch (e) {}
+      unsubOwned();
+      unsubShared();
     };
   }, [user]);
 
-  // ✅ 4) Create new document
+  // ✅ 4) Create document with permissions
   const createDocument = async () => {
     if (!user) return alert("Please log in to create a document");
 
@@ -132,14 +105,15 @@ export default function Dashboard() {
       title: title.trim() || "Untitled Document",
       content: "",
       ownerId: user.uid,
-      collaborators: [],
+      permissions: {
+        [user.email]: "owner",
+      },
       createdAt: serverTimestamp(),
       updatedAt: Date.now(),
     };
 
     try {
       const docRef = await addDoc(collection(db, "documents"), payload);
-
       setOwnedDocs((prev) => [
         { id: docRef.id, ...payload, createdAt: new Date() },
         ...prev,
@@ -151,7 +125,7 @@ export default function Dashboard() {
     }
   };
 
-  // ✅ 5) Delete document
+  // ✅ 5) Delete document (only owner)
   const handleDelete = async (id, title) => {
     const confirmDelete = window.confirm(
       `Are you sure you want to delete "${title}"?`
@@ -168,8 +142,8 @@ export default function Dashboard() {
     }
   };
 
-  // ✅ 6) Render documents with delete button
-  const renderDocs = (docs, label, allowDelete = false) => (
+  // ✅ 6) Render document list
+  const renderDocs = (docs, label) => (
     <>
       <h5 className="mt-4 mb-2 text-uppercase text-secondary fw-bold">
         {label}
@@ -185,37 +159,30 @@ export default function Dashboard() {
             >
               <Link
                 to={`/editor/${d.id}`}
-                className="text-decoration-none flex-grow-1 me-3"
+                className="text-decoration-none flex-grow-1"
               >
-                <div>
-                  <div className="fw-bold">{d.title || "Untitled"}</div>
-                  <div className="text-muted small">
-                    {d.content
-                      ? d.content.slice(0, 60) + "..."
-                      : "No content yet"}
-                  </div>
+                <div className="fw-bold">{d.title || "Untitled"}</div>
+                <div className="text-muted small">
+                  {d.content
+                    ? d.content.slice(0, 60) + "..."
+                    : "No content yet"}
                 </div>
               </Link>
 
-              <div className="d-flex align-items-center gap-2">
-                <small className="text-muted me-2">
+              <div className="d-flex align-items-center">
+                <small className="text-muted me-3">
                   {d.updatedAt?.toDate
                     ? new Date(d.updatedAt.toDate()).toLocaleString()
-                    : d.createdAt?.toDate
-                    ? new Date(d.createdAt.toDate()).toLocaleString()
                     : typeof d.updatedAt === "number"
                     ? new Date(d.updatedAt).toLocaleString()
-                    : typeof d.createdAt === "number"
-                    ? new Date(d.createdAt).toLocaleString()
                     : "No time"}
                 </small>
-
-                {allowDelete && (
+                {d.ownerId === user?.uid && (
                   <button
                     className="btn btn-sm btn-outline-danger"
-                    onClick={() => handleDelete(d.id, d.title || "Untitled")}
+                    onClick={() => handleDelete(d.id, d.title)}
                   >
-                    🗑️
+                    🗑
                   </button>
                 )}
               </div>
@@ -226,14 +193,13 @@ export default function Dashboard() {
     </>
   );
 
-  // ✅ 7) Render UI
-  if (!authChecked) {
+  // ✅ 7) UI
+  if (!authChecked)
     return (
       <div className="text-center py-5 text-muted">
         Initializing authentication...
       </div>
     );
-  }
 
   return (
     <div className="container py-4">
@@ -256,8 +222,8 @@ export default function Dashboard() {
         <div className="text-center text-muted py-5">Loading documents...</div>
       ) : (
         <>
-          {renderDocs(ownedDocs, "My Documents", true)}
-          {renderDocs(sharedDocs, "Shared with Me", false)}
+          {renderDocs(ownedDocs, "My Documents")}
+          {renderDocs(sharedDocs, "Shared with Me")}
         </>
       )}
     </div>
