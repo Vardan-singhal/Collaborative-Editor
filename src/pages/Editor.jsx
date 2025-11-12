@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   doc,
@@ -6,27 +6,34 @@ import {
   updateDoc,
   getDoc,
   arrayUnion,
+  serverTimestamp,
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { debounce } from "../utils/debounce";
 
 export default function Editor() {
   const { id } = useParams();
-  const [content, setContent] = React.useState("");
-  const [title, setTitle] = React.useState("");
-  const [status, setStatus] = React.useState("");
-  const [loading, setLoading] = React.useState(true);
+  const [content, setContent] = useState("");
+  const [title, setTitle] = useState("");
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  // Collaboration states
-  const [collabEmail, setCollabEmail] = React.useState("");
-  const [shareMsg, setShareMsg] = React.useState("");
+  const [collabEmail, setCollabEmail] = useState("");
+  const [shareMsg, setShareMsg] = useState("");
+  const [user, setUser] = useState(null);
 
-  React.useEffect(() => {
+  const skipNextSnapshot = useRef(false); // ✅ prevent overwrite after local save
+
+  useEffect(() => {
+    const unsubAuth = auth.onAuthStateChanged((u) => setUser(u));
+    return unsubAuth;
+  }, []);
+
+  useEffect(() => {
     if (!id) return;
-
     const docRef = doc(db, "documents", id);
 
-    // Load document initially
+    // Load once
     getDoc(docRef)
       .then((snap) => {
         if (snap.exists()) {
@@ -35,40 +42,38 @@ export default function Editor() {
           setContent(data.content || "");
         }
       })
-      .catch((err) => console.error("Error loading document:", err))
+      .catch(console.error)
       .finally(() => setLoading(false));
 
-    // Real-time updates for collaboration
-    const unsub = onSnapshot(
-      docRef,
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-
-        setTitle((prev) => (data.title !== prev ? data.title : prev));
-        setContent((prev) => (data.content !== prev ? data.content : prev));
-      },
-      (error) => {
-        console.error("Snapshot listener error:", error);
+    // Real-time listener
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (!snap.exists()) return;
+      if (skipNextSnapshot.current) {
+        skipNextSnapshot.current = false;
+        return; // ✅ skip the immediate echo of our own update
       }
-    );
+      const data = snap.data();
+      setTitle((prev) => (data.title !== prev ? data.title : prev));
+      setContent((prev) => (data.content !== prev ? data.content : prev));
+    });
 
     return () => unsub();
   }, [id]);
 
-  // Debounced content save
-  const saveContent = React.useMemo(
+  // ✅ Debounced saving for content
+  const saveContent = useMemo(
     () =>
       debounce(async (newContent) => {
         try {
           setStatus("Saving...");
           const docRef = doc(db, "documents", id);
+          skipNextSnapshot.current = true; // ✅ prevent overwrite
           await updateDoc(docRef, {
             content: newContent,
-            updatedAt: Date.now(),
+            updatedAt: serverTimestamp(),
           });
           setStatus("Saved");
-          setTimeout(() => setStatus(""), 1000);
+          setTimeout(() => setStatus(""), 800);
         } catch (error) {
           console.error("Error saving content:", error);
           setStatus("Error saving");
@@ -77,13 +82,17 @@ export default function Editor() {
     [id]
   );
 
-  // Debounced title save
-  const saveTitle = React.useMemo(
+  // ✅ Debounced saving for title
+  const saveTitle = useMemo(
     () =>
       debounce(async (newTitle) => {
         try {
           const docRef = doc(db, "documents", id);
-          await updateDoc(docRef, { title: newTitle, updatedAt: Date.now() });
+          skipNextSnapshot.current = true;
+          await updateDoc(docRef, {
+            title: newTitle,
+            updatedAt: serverTimestamp(),
+          });
         } catch (error) {
           console.error("Error saving title:", error);
         }
@@ -103,7 +112,6 @@ export default function Editor() {
     saveTitle(value);
   };
 
-  // ✅ Share document by collaborator email (store email directly)
   const handleAddCollaborator = async () => {
     try {
       const email = collabEmail.trim();
@@ -112,6 +120,7 @@ export default function Editor() {
       const docRef = doc(db, "documents", id);
       await updateDoc(docRef, {
         collaborators: arrayUnion(email),
+        updatedAt: serverTimestamp(),
       });
 
       setShareMsg(`Document shared with ${email}`);
@@ -123,13 +132,10 @@ export default function Editor() {
     }
   };
 
-  if (loading) {
-    return <div className="text-center mt-5">Loading document...</div>;
-  }
+  if (loading) return <div className="text-center mt-5">Loading document...</div>;
 
   return (
     <div className="container-fluid p-3" style={{ height: "90vh" }}>
-      {/* Title */}
       <div className="mb-3">
         <input
           type="text"
@@ -141,7 +147,6 @@ export default function Editor() {
         <small className="text-muted">{status}</small>
       </div>
 
-      {/* Share Collaborator Section */}
       <div className="input-group mb-3" style={{ maxWidth: "400px" }}>
         <input
           type="email"
@@ -150,16 +155,12 @@ export default function Editor() {
           value={collabEmail}
           onChange={(e) => setCollabEmail(e.target.value)}
         />
-        <button
-          className="btn btn-outline-primary"
-          onClick={handleAddCollaborator}
-        >
+        <button className="btn btn-outline-primary" onClick={handleAddCollaborator}>
           Share
         </button>
       </div>
       {shareMsg && <small className="text-success">{shareMsg}</small>}
 
-      {/* Content Editor */}
       <textarea
         className="form-control"
         style={{
